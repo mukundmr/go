@@ -30,8 +30,12 @@ func main() {
     mutex.Lock()
     defer mutex.Unlock()
     map1 := propertyList.Load().(map[string]bool)
-    map1[key] = val
-    propertyList.Store(map1)
+    map2 := make(map[string]bool)
+    for k,v := range map1 {
+      map2[k]=v
+    }
+    map2[key] = val
+    propertyList.Store(map2)
   }
 
   /* set the values as per environment */
