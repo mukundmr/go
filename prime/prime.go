@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"math/big"
 	//	"sync"
-	//	"time"
+	"time"
 )
 
 type splitMap map[string]*big.Int
+type bigChan chan *big.Int
 
 /* some handy constants. big.Int isn't friendly */
 var zero = big.NewInt(int64(0))
@@ -47,43 +48,48 @@ func make_odd(num_to_check *big.Int) {
 }
 
 /* evaluation loop */
-func looper(num_to_check *big.Int, start, end *big.Int, quit chan bool) (ret chan *big.Int) {
-	ret = make(chan *big.Int)
-	fmt.Println(start, end)
-	go func() {
+func looper(num_to_check *big.Int, start, end *big.Int, quit chan bool) (ret bigChan) {
+	ret = make(bigChan)
+	/*
+	 if you don't make local copies of the variables before invoking the Go function, by the time the Go routine is launched, the pointers change.
+	 launch of the Go function is not instantaneous, the main routine can do a lot of damage by modifying the pointers
+	*/
+	var dum1 *big.Int = big.NewInt(int64(0))
+	var dum2 *big.Int = big.NewInt(int64(0))
+	dum1.Set(start)
+	dum2.Set(end)
+	
+	go func(start, end *big.Int, quit chan bool) {
 		var interrupt = false
-		var itr big.Int
-		for itr.Set(start); itr.Cmp(end) < 0; itr.Add(&itr, two) {
+		var itr *big.Int = big.NewInt(int64(0))
+		for itr.Set(start); itr.Cmp(end) < 0; itr.Add(itr, two) {
 			select {
 			default:
-				if isDivisible(num_to_check, &itr) {
+				if isDivisible(num_to_check, itr) {
 					interrupt = true
 					quit <- true
-					var val big.Int
-					val.Set(&itr)
-					ret <- &val
-					fmt.Println("returning ", itr.String(), " from ", start, " to ", end)
+					var val *big.Int = big.NewInt(int64(0))
+					val.Set(itr)
+					ret <- val
 					break
 				}
 			case <-quit:
 				interrupt = true
 				ret <- zero
 				quit <- true
-				fmt.Println("interupt due to quit from ", start, " to ", end)
 				break
 			}
 		}
 		if !interrupt {
 			ret <- zero
-			fmt.Println("returning ", zero.String())
 		}
-	}()
-	return
+	}(dum1, dum2, quit)
+	return 
 }
 
 /* mux */
-func mux4to1(a, b, c, d <-chan *big.Int) (ret chan *big.Int) {
-	ret = make(chan *big.Int)
+func mux4to1(a, b, c, d <-chan *big.Int) (ret bigChan) {
+	ret = make(bigChan)
 	go func() {
 		for {
 			select {
@@ -95,6 +101,7 @@ func mux4to1(a, b, c, d <-chan *big.Int) (ret chan *big.Int) {
 				ret <- z
 			case z := <-d:
 				ret <- z
+			case <-time.After(time.Second) : fmt.Print(".")
 			}
 		}
 	}()
@@ -112,21 +119,25 @@ func isPrime(num_to_check *big.Int) (isPrime bool) {
 		return
 	}
 	splits := get_splits(num_to_check)
-	var stream = make(chan (chan *big.Int), len(splits))
+	var stream = make(chan chan *big.Int, len(splits))
 	var quit = make(chan bool)
-	var start,stop big.Int
+	var start1,stop1 *big.Int
+	start1 = big.NewInt(int64(0))
+	stop1 = big.NewInt(int64(0))
 	for key, value := range splits {
-		start.SetString(key, 10)
-		stop.Set(value)
-		stream <- looper(num_to_check, &start, &stop, quit)
+		start1.SetString(key, 10)
+		stop1.Set(value)
+		stream <- looper(num_to_check, start1, stop1, quit)
 	}
 	resultChan := mux4to1(<-stream, <-stream, <-stream, <-stream)
+	loop:
 	for waitloop := 0; waitloop < len(splits); waitloop++ {
 		select {
 		case val := <-resultChan:
 			if val.Cmp(zero) != 0 {
 				fmt.Println(num_to_check, " divisible by ", val)
 				isPrime = false
+				break loop
 			}
 		}
 	}
@@ -135,7 +146,8 @@ func isPrime(num_to_check *big.Int) (isPrime bool) {
 
 func main() {
 	var i big.Int
-	i.SetString("9513", 10)
+//	i.SetString("203485723098475028364598273498572098347530298709242324136671313", 10)
+	i.SetString("20348572309847502836443", 10)
 	if isPrime(&i) {
 		fmt.Println(i.String(), "is a prime number")
 	} else {
